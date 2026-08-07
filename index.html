@@ -86,10 +86,18 @@
           </div>
           <section id="vehicleCard" class="hidden">
             <div class="card-head">
-              <div>
+              <div class="card-identity">
                 <span id="activeBadge" class="badge"></span>
                 <h2 id="vehicleTitle"></h2>
                 <p id="vehicleSubtitle"></p>
+              </div>
+              <div class="vehicle-card-photo-wrap">
+                <button id="vehiclePhotoButton" class="vehicle-card-photo" type="button" disabled>
+                  <img id="vehiclePhotoImage" class="hidden" alt="">
+                  <span id="vehiclePhotoPlaceholder" class="vehicle-photo-placeholder" aria-hidden="true">🚗</span>
+                  <span class="vehicle-photo-edit-hint">Foto ändern</span>
+                </button>
+                <input id="vehiclePhotoInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
               </div>
               <div class="card-actions">
                 <button id="editBtn">Bearbeiten</button
