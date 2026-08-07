@@ -1441,4 +1441,72 @@ textarea {
     justify-content: flex-start;
   }
 }
-\n\n/* Zentrale Lade- und Fortschrittsanzeige */\n.loading-overlay {\n  position: fixed;\n  inset: 0;\n  z-index: 10000;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 20px;\n  background: rgba(248, 250, 251, 0.72);\n  backdrop-filter: blur(2px);\n}\n.loading-overlay.hidden { display: none; }\n.loading-card {\n  width: min(390px, calc(100vw - 40px));\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 9px;\n  padding: 25px 28px 22px;\n  border: 1px solid #dce3e7;\n  border-radius: 14px;\n  background: #fff;\n  box-shadow: 0 16px 45px rgba(38, 50, 56, 0.18);\n  text-align: center;\n}\n.loading-card strong { color: #263238; font-size: 1.05rem; }\n.loading-card > span { color: #607d8b; font-size: .9rem; min-height: 1.2em; }\n.loading-spinner {\n  width: 38px;\n  height: 38px;\n  border: 4px solid #e3eaed;\n  border-top-color: #607d8b;\n  border-radius: 50%;\n  animation: fleetSpin .8s linear infinite;\n  margin-bottom: 2px;\n}\n.loading-progress-track {\n  width: 100%;\n  height: 7px;\n  overflow: hidden;\n  border-radius: 999px;\n  background: #e8eef1;\n  margin-top: 4px;\n}\n.loading-progress {\n  height: 100%;\n  width: 0%;\n  border-radius: inherit;\n  background: #607d8b;\n  transition: width .22s ease;\n}\n.loading-progress.indeterminate {\n  width: 38%;\n  animation: fleetProgress 1.15s ease-in-out infinite;\n}\n.loading-percent { min-height: 1em; color: #78909c; font-size: .78rem; }\n@keyframes fleetSpin { to { transform: rotate(360deg); } }\n@keyframes fleetProgress {\n  0% { transform: translateX(-115%); }\n  50% { transform: translateX(85%); }\n  100% { transform: translateX(265%); }\n}\n@media (prefers-reduced-motion: reduce) {\n  .loading-spinner, .loading-progress.indeterminate { animation-duration: 2.2s; }\n}\n
+
+
+
+/* Zentrale Lade- und Fortschrittsanzeige */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(248, 250, 251, 0.72);
+  backdrop-filter: blur(2px);
+}
+.loading-overlay.hidden { display: none; }
+.loading-card {
+  width: min(390px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 25px 28px 22px;
+  border: 1px solid #dce3e7;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 16px 45px rgba(38, 50, 56, 0.18);
+  text-align: center;
+}
+.loading-card strong { color: #263238; font-size: 1.05rem; }
+.loading-card > span { color: #607d8b; font-size: .9rem; min-height: 1.2em; }
+.loading-spinner {
+  width: 38px;
+  height: 38px;
+  border: 4px solid #e3eaed;
+  border-top-color: #607d8b;
+  border-radius: 50%;
+  animation: fleetSpin .8s linear infinite;
+  margin-bottom: 2px;
+}
+.loading-progress-track {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef1;
+  margin-top: 4px;
+}
+.loading-progress {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: #607d8b;
+  transition: width .22s ease;
+}
+.loading-progress.indeterminate {
+  width: 38%;
+  animation: fleetProgress 1.15s ease-in-out infinite;
+}
+.loading-percent { min-height: 1em; color: #78909c; font-size: .78rem; }
+@keyframes fleetSpin { to { transform: rotate(360deg); } }
+@keyframes fleetProgress {
+  0% { transform: translateX(-115%); }
+  50% { transform: translateX(85%); }
+  100% { transform: translateX(265%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner, .loading-progress.indeterminate { animation-duration: 2.2s; }
+}
