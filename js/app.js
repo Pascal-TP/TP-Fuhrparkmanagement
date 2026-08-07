@@ -258,6 +258,12 @@ function hideLoading() {
   if (overlay) overlay.classList.add("hidden");
 }
 
+function waitForLoadingPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+}
+
 async function withLoading(title, message, task) {
   showLoading(title, message);
   try {
@@ -653,6 +659,7 @@ async function changeVehiclePhoto(event) {
   }
   try {
     showLoading("Fahrzeugfoto", "Foto wird verkleinert und vorbereitet …");
+    await waitForLoadingPaint();
     draft.vehiclePhoto = await createVehicleThumbnail(file);
     addHistory(draft, "Fahrzeugfoto geändert", file.name);
     renderVehiclePhoto(draft);
@@ -1167,6 +1174,7 @@ function bindCostSettings() {
 }
 async function saveEdits() {
   showLoading("Fahrzeug speichern", "Änderungen werden geprüft und gespeichert …");
+  await waitForLoadingPaint();
   try {
     if (!canWrite())
       throw new Error("Für diese Aktion fehlt die Berechtigung.");
@@ -1448,6 +1456,7 @@ async function uploadFiles(e) {
   input.disabled = true;
   const filesToUpload = Array.from(input.files || []);
   showLoading("Dateien hochladen", `${filesToUpload.length} Datei(en) werden vorbereitet …`, 0);
+  await waitForLoadingPaint();
   try {
     const v = current();
     for (let i = 0; i < filesToUpload.length; i++) {
@@ -2017,6 +2026,7 @@ async function restoreBackup(e) {
     )
       return;
     showLoading("Backup einspielen", "Vorhandene Fahrzeugdaten werden ersetzt …", 5);
+    await waitForLoadingPaint();
     vehicles = data.vehicles;
     settings = { ...defaultSettings, ...(data.settings || {}) };
     normalizeVehicles();
