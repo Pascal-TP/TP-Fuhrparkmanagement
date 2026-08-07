@@ -341,8 +341,14 @@ function bindStatic() {
     editing = true;
     draft = structuredClone(current());
     toggleEdit();
+    renderHeader();
     renderContent();
   };
+  $("#vehiclePhotoButton").onclick = () => {
+    if (!editing || !canWrite()) return;
+    $("#vehiclePhotoInput").click();
+  };
+  $("#vehiclePhotoInput").onchange = changeVehiclePhoto;
   $("#cancelBtn").onclick = () => {
     editing = false;
     draft = null;
@@ -508,7 +514,7 @@ function renderList() {
     list
       .map(
         (v) =>
-          `<button class="vehicle-item ${v.id === selectedId ? "active" : ""}" data-id="${v.id}"><strong><span class="dot ${v.archived ? "archive" : v.active ? "on" : ""}"></span>${esc(v.displayName || "Ohne Kennzeichen")}</strong><small>${esc(v.master.I || "")} ${esc(v.master.J || "")} · ${esc(v.master.AO || v.master.AN || "")}</small></button>`,
+          `<button class="vehicle-item ${v.id === selectedId ? "active" : ""}" data-id="${v.id}"><span class="vehicle-item-copy"><strong><span class="dot ${v.archived ? "archive" : v.active ? "on" : ""}"></span>${esc(v.displayName || "Ohne Kennzeichen")}</strong><small>${esc(v.master.I || "")} ${esc(v.master.J || "")} · ${esc(v.master.AO || v.master.AN || "")}</small></span><span class="vehicle-list-photo">${v.vehiclePhoto ? `<img src="${esc(v.vehiclePhoto)}" alt="Fahrzeugfoto ${esc(v.displayName || "")}">` : '<span class="vehicle-photo-placeholder" aria-hidden="true">🚗</span>'}</span></button>`,
       )
       .join("") || '<p class="count">Keine Fahrzeuge in dieser Ansicht.</p>';
   $("#vehicleList").onclick = (e) => {
@@ -551,7 +557,78 @@ function renderHeader() {
   $("#archiveBtn").textContent = v.archived
     ? "Aus Archiv holen"
     : "Archivieren";
+  renderVehiclePhoto(v);
 }
+function renderVehiclePhoto(v = working() || current()) {
+  const button = $("#vehiclePhotoButton");
+  const image = $("#vehiclePhotoImage");
+  const placeholder = $("#vehiclePhotoPlaceholder");
+  if (!button || !image || !placeholder || !v) return;
+  const hasPhoto = Boolean(v.vehiclePhoto);
+  image.src = hasPhoto ? v.vehiclePhoto : "";
+  image.alt = hasPhoto ? `Fahrzeugfoto ${v.displayName || ""}` : "";
+  image.classList.toggle("hidden", !hasPhoto);
+  placeholder.classList.toggle("hidden", hasPhoto);
+  button.classList.toggle("editable", editing && canWrite());
+  button.disabled = !(editing && canWrite());
+  button.title = editing && canWrite()
+    ? hasPhoto
+      ? "Fahrzeugfoto ändern"
+      : "Fahrzeugfoto hochladen"
+    : "Fahrzeugfoto";
+}
+
+async function changeVehiclePhoto(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || !editing || !draft || !canWrite()) return;
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    alert("Bitte ein Foto im Format JPG, PNG oder WEBP auswählen.");
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert("Das Ausgangsfoto darf maximal 10 MB groß sein.");
+    return;
+  }
+  try {
+    draft.vehiclePhoto = await createVehicleThumbnail(file);
+    addHistory(draft, "Fahrzeugfoto geändert", file.name);
+    renderVehiclePhoto(draft);
+  } catch (error) {
+    console.error(error);
+    alert(error.message || "Das Fahrzeugfoto konnte nicht verarbeitet werden.");
+  }
+}
+
+function createVehicleThumbnail(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Das Foto konnte nicht gelesen werden."));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("Das Fotoformat konnte nicht verarbeitet werden."));
+      image.onload = () => {
+        const maxWidth = 640;
+        const maxHeight = 400;
+        const scale = Math.min(1, maxWidth / image.width, maxHeight / image.height);
+        const width = Math.max(1, Math.round(image.width * scale));
+        const height = Math.max(1, Math.round(image.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.78));
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function toggleEdit() {
   const writable = canWrite();
   $("#vehicleHistoryBtn").classList.toggle("hidden", !selectedId);
@@ -560,6 +637,7 @@ function toggleEdit() {
   $("#cancelBtn").classList.toggle("hidden", !editing || !writable);
   $("#archiveBtn").classList.toggle("hidden", !editing || !writable);
   $("#deleteVehicleBtn").classList.toggle("hidden", !editing || !isAdmin());
+  renderVehiclePhoto();
 }
 function renderTabs() {
   $("#tabs").innerHTML = tabs
