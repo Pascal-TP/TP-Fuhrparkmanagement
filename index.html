@@ -347,6 +347,19 @@
       </div>
     </div>
 
+
+    <div id="loadingOverlay" class="loading-overlay hidden" role="status" aria-live="polite" aria-busy="true">
+      <div class="loading-card">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <strong id="loadingTitle">Bitte warten …</strong>
+        <span id="loadingMessage">Daten werden verarbeitet.</span>
+        <div class="loading-progress-track" aria-hidden="true">
+          <div id="loadingProgress" class="loading-progress indeterminate"></div>
+        </div>
+        <small id="loadingPercent" class="loading-percent"></small>
+      </div>
+    </div>
+
     <script type="module" src="js/app.js"></script>
   </body>
 </html>
