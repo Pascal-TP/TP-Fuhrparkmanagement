@@ -222,6 +222,51 @@ let baseData,
   currentView = "all",
   settings = { ...defaultSettings };
 
+let loadingVisible = false;
+
+function showLoading(title = "Bitte warten …", message = "Daten werden verarbeitet.", progress = null) {
+  const overlay = $("#loadingOverlay");
+  if (!overlay) return;
+  loadingVisible = true;
+  overlay.classList.remove("hidden");
+  $("#loadingTitle").textContent = title;
+  updateLoading(message, progress);
+}
+
+function updateLoading(message = "", progress = null) {
+  if (!loadingVisible) return;
+  const text = $("#loadingMessage");
+  const bar = $("#loadingProgress");
+  const percent = $("#loadingPercent");
+  if (text) text.textContent = message;
+  if (!bar || !percent) return;
+  if (Number.isFinite(progress)) {
+    const value = Math.max(0, Math.min(100, Number(progress)));
+    bar.classList.remove("indeterminate");
+    bar.style.width = `${value}%`;
+    percent.textContent = `${Math.round(value)} %`;
+  } else {
+    bar.classList.add("indeterminate");
+    bar.style.width = "";
+    percent.textContent = "";
+  }
+}
+
+function hideLoading() {
+  loadingVisible = false;
+  const overlay = $("#loadingOverlay");
+  if (overlay) overlay.classList.add("hidden");
+}
+
+async function withLoading(title, message, task) {
+  showLoading(title, message);
+  try {
+    return await task();
+  } finally {
+    hideLoading();
+  }
+}
+
 async function init() {
   baseData = await fetch("data/vehicles.json").then((r) => {
     if (!r.ok) throw new Error("Fahrzeugdaten konnten nicht geladen werden.");
@@ -234,9 +279,11 @@ async function init() {
   onAuthStateChanged(fleetAuth, async (user) => {
     if (!user) {
       currentUser = null;
+      hideLoading();
       showLogin();
       return;
     }
+    showLoading("Anmeldung wird geladen", "Benutzerprofil wird geprüft …");
     try {
       const profileSnap = await getDoc(doc(fleetDb, "users", user.uid));
       if (!profileSnap.exists())
@@ -256,11 +303,14 @@ async function init() {
         name: profile.name || user.displayName || "",
         role: profile.role,
       };
+      updateLoading("Fahrzeugdaten und Einstellungen werden geladen …");
       await loadCloudData();
       login(currentUser);
+      hideLoading();
     } catch (err) {
       console.error(err);
       await signOut(fleetAuth).catch(() => {});
+      hideLoading();
       showLogin();
       $("#loginMessage").textContent =
         err.message || "Anmeldung konnte nicht abgeschlossen werden.";
@@ -313,8 +363,11 @@ function bindStatic() {
     const email = $("#loginEmail").value.trim(),
       pw = $("#loginPassword").value;
     try {
+      showLoading("Anmeldung", "Zugangsdaten werden geprüft …");
       await signInWithEmailAndPassword(fleetAuth, email, pw);
+      updateLoading("Anmeldung erfolgreich. Daten werden geladen …");
     } catch (err) {
+      hideLoading();
       console.error(err);
       $("#loginMessage").textContent =
         "Anmeldung fehlgeschlagen. Bitte E-Mail und Passwort prüfen.";
@@ -418,6 +471,7 @@ function canWrite() {
   return currentUser?.role === "admin" || currentUser?.role === "user";
 }
 async function loadCloudData() {
+  updateLoading("Fahrzeuge werden aus Firestore geladen …");
   const snaps = await getDocs(collection(fleetDb, "vehicles"));
   vehicles = snaps.docs.map((d) => ({ id: d.id, ...d.data() }));
   if (!vehicles.length) {
@@ -444,6 +498,7 @@ async function loadCloudData() {
     }
   }
   normalizeVehicles();
+  updateLoading(`${vehicles.length} Fahrzeuge geladen. Einstellungen werden geprüft …`);
   const settingsSnap = await getDoc(doc(fleetDb, "settings", "general"));
   const localSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
   settings = {
@@ -460,7 +515,12 @@ async function importInitialVehicles() {
   const chunks = [];
   for (let i = 0; i < vehicles.length; i += 400)
     chunks.push(vehicles.slice(i, i + 400));
-  for (const chunk of chunks) {
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    const chunk = chunks[chunkIndex];
+    updateLoading(
+      `Erstimport: Datenblock ${chunkIndex + 1} von ${chunks.length} wird gespeichert …`,
+      ((chunkIndex + 1) / chunks.length) * 95,
+    );
     const batch = writeBatch(fleetDb);
     for (const v of chunk) {
       batch.set(doc(fleetDb, "vehicles", v.id), cleanForFirestore(v));
@@ -592,12 +652,15 @@ async function changeVehiclePhoto(event) {
     return;
   }
   try {
+    showLoading("Fahrzeugfoto", "Foto wird verkleinert und vorbereitet …");
     draft.vehiclePhoto = await createVehicleThumbnail(file);
     addHistory(draft, "Fahrzeugfoto geändert", file.name);
     renderVehiclePhoto(draft);
   } catch (error) {
     console.error(error);
     alert(error.message || "Das Fahrzeugfoto konnte nicht verarbeitet werden.");
+  } finally {
+    hideLoading();
   }
 }
 
@@ -1103,6 +1166,7 @@ function bindCostSettings() {
   );
 }
 async function saveEdits() {
+  showLoading("Fahrzeug speichern", "Änderungen werden geprüft und gespeichert …");
   try {
     if (!canWrite())
       throw new Error("Für diese Aktion fehlt die Berechtigung.");
@@ -1136,6 +1200,8 @@ async function saveEdits() {
   } catch (err) {
     console.error(err);
     alert("Die Änderungen konnten nicht gespeichert werden: " + err.message);
+  } finally {
+    hideLoading();
   }
 }
 function archiveVehicle() {
@@ -1163,9 +1229,14 @@ async function deleteVehicle() {
     )
   )
     return;
-  await deleteDoc(doc(fleetDb, "vehicles", selectedId));
-  vehicles = vehicles.filter((v) => v.id !== selectedId);
-  showDashboard();
+  showLoading("Fahrzeug löschen", "Fahrzeug wird aus Firestore entfernt …");
+  try {
+    await deleteDoc(doc(fleetDb, "vehicles", selectedId));
+    vehicles = vehicles.filter((v) => v.id !== selectedId);
+    showDashboard();
+  } finally {
+    hideLoading();
+  }
 }
 async function addVehicle(e) {
   e.preventDefault();
@@ -1200,15 +1271,20 @@ async function addVehicle(e) {
     v.annual[String(y)] = { insuranceAnnual: 0, taxAnnual: 0 };
   }
   addHistory(v, "Fahrzeug angelegt", "Neuer Fahrzeugdatensatz");
-  vehicles.unshift(v);
-  await persistVehicle(v);
-  closeModal("vehicleModal");
-  e.target.reset();
-  selectVehicle(v.id);
-  editing = true;
-  draft = structuredClone(v);
-  toggleEdit();
-  renderContent();
+  showLoading("Fahrzeug anlegen", "Neuer Fahrzeugdatensatz wird gespeichert …");
+  try {
+    vehicles.unshift(v);
+    await persistVehicle(v);
+    closeModal("vehicleModal");
+    e.target.reset();
+    selectVehicle(v.id);
+    editing = true;
+    draft = structuredClone(v);
+    toggleEdit();
+    renderContent();
+  } finally {
+    hideLoading();
+  }
 }
 function renderAppointments() {
   const v = working(),
@@ -1223,7 +1299,7 @@ function renderAppointments() {
     $("#addAppointment").onclick = () => openModal("appointmentModal");
   $$("[data-done]").forEach(
     (b) =>
-      (b.onclick = () => {
+      (b.onclick = async () => {
         const target = working();
         const a = target.appointments.find((x) => x.id === b.dataset.done);
         if (!a) return;
@@ -1233,13 +1309,20 @@ function renderAppointments() {
           a.done ? "Termin erledigt" : "Termin wieder geöffnet",
           `${a.type} am ${formatDate(a.date)}`,
         );
-        if (!editing) persistVehicle(target);
+        if (!editing) {
+          showLoading("Termin aktualisieren", "Terminstatus wird gespeichert …");
+          try {
+            await persistVehicle(target);
+          } finally {
+            hideLoading();
+          }
+        }
         renderAppointments();
       }),
   );
   $$("[data-delete]").forEach(
     (b) =>
-      (b.onclick = () => {
+      (b.onclick = async () => {
         if (!confirm("Termin wirklich löschen?")) return;
         const target = working(),
           a = target.appointments.find((x) => x.id === b.dataset.delete);
@@ -1251,7 +1334,14 @@ function renderAppointments() {
           "Termin gelöscht",
           a ? `${a.type} am ${formatDate(a.date)}` : "",
         );
-        if (!editing) persistVehicle(target);
+        if (!editing) {
+          showLoading("Termin löschen", "Termin wird gespeichert …");
+          try {
+            await persistVehicle(target);
+          } finally {
+            hideLoading();
+          }
+        }
         renderAppointments();
       }),
   );
@@ -1276,10 +1366,15 @@ async function addAppointment(e) {
   v.appointments = v.appointments || [];
   v.appointments.push(a);
   addHistory(v, "Termin angelegt", `${a.type} am ${formatDate(a.date)}`);
-  if (!editing) await persistVehicle(v);
-  e.target.reset();
-  closeModal("appointmentModal");
-  renderAppointments();
+  showLoading("Termin speichern", "Termin wird übernommen …");
+  try {
+    if (!editing) await persistVehicle(v);
+    e.target.reset();
+    closeModal("appointmentModal");
+    renderAppointments();
+  } finally {
+    hideLoading();
+  }
 }
 function formatDate(v) {
   return v
@@ -1299,6 +1394,7 @@ async function renderDocuments() {
         try {
           const file = v.documents.find((x) => x.id === b.dataset.openFile);
           if (!file) return;
+          showLoading("Datei öffnen", `${file.name} wird vorbereitet …`);
           const getUrls = httpsCallable(
             blazeFunctions,
             "getFleetVehicleFileUrls",
@@ -1314,6 +1410,8 @@ async function renderDocuments() {
         } catch (err) {
           console.error(err);
           alert(err.message || "Datei konnte nicht geöffnet werden.");
+        } finally {
+          hideLoading();
         }
       }),
   );
@@ -1324,6 +1422,7 @@ async function renderDocuments() {
         try {
           const file = v.documents.find((x) => x.id === b.dataset.deleteFile);
           if (!file) return;
+          showLoading("Datei löschen", `${file.name} wird gelöscht …`);
           const del = httpsCallable(blazeFunctions, "deleteFleetVehicleFile");
           await del({
             idToken: await fleetAuth.currentUser.getIdToken(),
@@ -1337,6 +1436,8 @@ async function renderDocuments() {
         } catch (err) {
           console.error(err);
           alert(err.message || "Datei konnte nicht gelöscht werden.");
+        } finally {
+          hideLoading();
         }
       }),
   );
@@ -1345,9 +1446,13 @@ async function uploadFiles(e) {
   if (!canWrite()) return alert("Für diese Aktion fehlt die Berechtigung.");
   const input = e.target;
   input.disabled = true;
+  const filesToUpload = Array.from(input.files || []);
+  showLoading("Dateien hochladen", `${filesToUpload.length} Datei(en) werden vorbereitet …`, 0);
   try {
     const v = current();
-    for (const file of input.files) {
+    for (let i = 0; i < filesToUpload.length; i++) {
+      const file = filesToUpload[i];
+      updateLoading(`Datei ${i + 1} von ${filesToUpload.length}: ${file.name}`, (i / Math.max(1, filesToUpload.length)) * 90);
       const base64Data = await fileToBase64(file);
       const upload = httpsCallable(blazeFunctions, "uploadFleetVehicleFile");
       const result = await upload({
@@ -1363,7 +1468,9 @@ async function uploadFiles(e) {
       v.documents.push(meta);
       addHistory(v, "Datei hochgeladen", file.name);
     }
+    updateLoading("Dateimetadaten werden gespeichert …", 95);
     await persistVehicle(v);
+    updateLoading("Upload abgeschlossen.", 100);
     await renderDocuments();
   } catch (err) {
     console.error(err);
@@ -1371,6 +1478,7 @@ async function uploadFiles(e) {
   } finally {
     input.disabled = false;
     input.value = "";
+    hideLoading();
   }
 }
 function fileToBase64(file) {
@@ -1908,6 +2016,7 @@ async function restoreBackup(e) {
       )
     )
       return;
+    showLoading("Backup einspielen", "Vorhandene Fahrzeugdaten werden ersetzt …", 5);
     vehicles = data.vehicles;
     settings = { ...defaultSettings, ...(data.settings || {}) };
     normalizeVehicles();
@@ -1918,9 +2027,12 @@ async function restoreBackup(e) {
     selectedId = null;
     showDashboard();
     renderList();
+    updateLoading("Backup wurde vollständig eingespielt.", 100);
     alert("Backup wurde erfolgreich in Firestore eingespielt.");
   } catch (err) {
     alert("Backup konnte nicht eingespielt werden: " + err.message);
+  } finally {
+    hideLoading();
   }
 }
 async function replaceAllCloudData() {
@@ -1931,11 +2043,14 @@ async function replaceAllCloudData() {
     groups[idx] = groups[idx] || [];
     groups[idx].push(d);
   });
-  for (const group of groups) {
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+    const group = groups[groupIndex];
+    updateLoading(`Alte Daten werden entfernt: Block ${groupIndex + 1} von ${groups.length} …`, 5 + ((groupIndex + 1) / Math.max(1, groups.length)) * 30);
     const batch = writeBatch(fleetDb);
     group.forEach((d) => batch.delete(d.ref));
     await batch.commit();
   }
+  updateLoading("Neue Fahrzeugdaten werden geschrieben …", 40);
   await importInitialVehicles();
 }
 function openSettings() {
@@ -1962,9 +2077,14 @@ async function saveSettings(e) {
     remindAppointments: f.remindAppointments.checked,
     appointmentDays: Number(f.appointmentDays.value || 0),
   };
-  await setDoc(doc(fleetDb, "settings", "general"), settings, { merge: true });
-  closeModal("settingsModal");
-  if (!$("#dashboard").classList.contains("hidden")) renderDashboard();
+  showLoading("Einstellungen speichern", "Erinnerungseinstellungen werden gespeichert …");
+  try {
+    await setDoc(doc(fleetDb, "settings", "general"), settings, { merge: true });
+    closeModal("settingsModal");
+    if (!$("#dashboard").classList.contains("hidden")) renderDashboard();
+  } finally {
+    hideLoading();
+  }
 }
 function openModal(id) {
   $("#" + id).classList.remove("hidden");
@@ -2043,6 +2163,8 @@ async function dbDelete(id) {
   });
 }
 
+showLoading("TP-Fuhrparkmanagement", "Anwendung wird gestartet …");
 init().catch((err) => {
+  hideLoading();
   document.body.innerHTML = `<div class="empty-state"><h2>Fehler beim Laden</h2><p>${esc(err.message)}</p><p>Bitte über einen lokalen Webserver oder GitHub Pages öffnen.</p></div>`;
 });
