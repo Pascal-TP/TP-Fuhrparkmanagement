@@ -208,6 +208,8 @@ const defaultSettings = {
   uvvDays: 60,
   remindAppointments: true,
   appointmentDays: 30,
+  remindLeasing: true,
+  leasingDays: 120,
 };
 let baseData,
   vehicles,
@@ -1670,9 +1672,12 @@ function addMonthsClamped(date, months) {
   return result;
 }
 function dashboardLeasingContracts() {
+  if (!settings.remindLeasing) return [];
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const horizon = addMonthsClamped(today, 4);
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + Math.max(0, Number(settings.leasingDays) || 0));
+  horizon.setHours(23, 59, 59, 999);
   return vehicles
     .filter((v) => {
       if (v.archived) return false;
@@ -1751,7 +1756,9 @@ function renderDashboardLeasingDetail() {
           </div>`;
         }).join("")}
       </div>`
-    : '<p class="empty-dashboard">Keine ausgelaufenen oder innerhalb der nächsten vier Monate auslaufenden Leasingverträge vorhanden.</p>';
+    : `<p class="empty-dashboard">${settings.remindLeasing
+      ? `Keine ausgelaufenen oder innerhalb der nächsten ${Number(settings.leasingDays) || 0} Tage auslaufenden Leasingverträge vorhanden.`
+      : "Die Erinnerung an Leasingenden ist in den allgemeinen Einstellungen deaktiviert."}</p>`;
   $$("[data-dashboard-open]").forEach(
     (b) => (b.onclick = () => openDashboardVehicle(b.dataset.dashboardOpen, b.dataset.dashboardTab)),
   );
@@ -1930,7 +1937,7 @@ function renderDashboard() {
   <button class="kpi kpi-clickable" data-dashboard-action="charges"><span>Interne Verrechnung</span><strong>${money(currentData.charge)}</strong><small>${dashboardPeriodLabel(currentDate)}</small></button>
   <button class="kpi kpi-clickable" data-dashboard-action="workshop"><span>Werkstattkosten</span><strong>${money(currentData.workshop)}</strong><small>${dashboardPeriodLabel(currentDate)}</small></button>
   <button class="kpi kpi-clickable ${dashboardSeverity(overdue)}" data-dashboard-action="overdue"><span>Überfällige Hinweise</span><strong>${overdue}</strong><small>${soon} weitere demnächst fällig</small></button>
-  <button class="kpi kpi-clickable ${leasingReminders.length === 0 ? "status-good" : expiredLeasing > 0 ? "status-danger" : "status-warning"}" data-dashboard-action="leasing"><span>Auslaufende/ausgelaufene Leasingverträge</span><strong>${leasingReminders.length}</strong><small>${expiredLeasing} ausgelaufen · ${upcomingLeasing} in den nächsten 4 Monaten</small></button>
+  <button class="kpi kpi-clickable ${leasingReminders.length === 0 ? "status-good" : expiredLeasing > 0 ? "status-danger" : "status-warning"}" data-dashboard-action="leasing"><span>Auslaufende/ausgelaufene Leasingverträge</span><strong>${leasingReminders.length}</strong><small>${settings.remindLeasing ? `${expiredLeasing} ausgelaufen · ${upcomingLeasing} in den nächsten ${Number(settings.leasingDays) || 0} Tagen` : "Erinnerung deaktiviert"}</small></button>
   <button class="kpi kpi-clickable" data-dashboard-action="files"><span>Dokumente und Fotos</span><strong>${allDocs}</strong><small>${photoCount} Foto(s)</small></button>
  </div>
  <div class="dashboard-status-grid">
@@ -2202,6 +2209,8 @@ async function saveSettings(e) {
     uvvDays: Number(f.uvvDays.value || 0),
     remindAppointments: f.remindAppointments.checked,
     appointmentDays: Number(f.appointmentDays.value || 0),
+    remindLeasing: f.remindLeasing.checked,
+    leasingDays: Number(f.leasingDays.value || 0),
   };
   showLoading("Einstellungen speichern", "Erinnerungseinstellungen werden gespeichert …");
   try {
