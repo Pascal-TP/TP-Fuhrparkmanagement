@@ -1510,3 +1510,27 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .loading-spinner, .loading-progress.indeterminate { animation-duration: 2.2s; }
 }
+
+/* Dashboard V2.7: Leasing-Erinnerungen */
+.leasing-detail-table {
+  min-width: 900px;
+}
+.leasing-detail-head,
+.leasing-detail-row {
+  grid-template-columns: 1.35fr 0.8fr 1.1fr 1.25fr 90px;
+}
+.leasing-detail-row.dismissed {
+  opacity: 0.62;
+  background: #f6f7f8;
+  border-left: 5px solid #90a4ae;
+}
+.leasing-dismiss-cell label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.leasing-dismiss-cell input:disabled + * {
+  cursor: default;
+}
