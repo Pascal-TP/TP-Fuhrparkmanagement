@@ -327,6 +327,7 @@ function normalizeVehicles() {
   vehicles.forEach((v) => {
     v.archived = Boolean(v.archived);
     v.active = v.archived ? false : v.active !== false;
+    v.leasingReminderDismissed = Boolean(v.leasingReminderDismissed);
     v.costSettings = { ...costDefaults, ...(v.costSettings || {}) };
     v.documents = v.documents || [];
     v.appointments = v.appointments || [];
@@ -1650,6 +1651,115 @@ function dashboardAlerts() {
   }
   return alerts.sort((a, b) => a.date.localeCompare(b.date));
 }
+
+function parseIsoDateLocal(value) {
+  if (!value) return null;
+  const parts = String(value).slice(0, 10).split("-").map(Number);
+  if (parts.length !== 3 || parts.some((x) => !Number.isFinite(x))) return null;
+  const [y, m, d] = parts;
+  const date = new Date(y, m - 1, d);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function addMonthsClamped(date, months) {
+  const result = new Date(date.getFullYear(), date.getMonth(), 1);
+  const targetMonth = result.getMonth() + months;
+  result.setMonth(targetMonth);
+  const lastDay = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+  result.setDate(Math.min(date.getDate(), lastDay));
+  result.setHours(23, 59, 59, 999);
+  return result;
+}
+function dashboardLeasingContracts() {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const horizon = addMonthsClamped(today, 4);
+  return vehicles
+    .filter((v) => {
+      if (v.archived) return false;
+      const financing = String(v.master?.AW || "").toLowerCase();
+      if (!financing.includes("leasing")) return false;
+      const endDate = parseIsoDateLocal(v.master?.AZ);
+      return endDate && endDate <= horizon;
+    })
+    .map((v) => {
+      const endDate = parseIsoDateLocal(v.master.AZ);
+      const diffMs = endDate.getTime() - today.getTime();
+      const daysDifference = Math.ceil(diffMs / 86400000);
+      return {
+        vehicle: v,
+        endDate,
+        daysDifference,
+        status: daysDifference < 0 ? "overdue" : "soon",
+        dismissed: Boolean(v.leasingReminderDismissed),
+      };
+    })
+    .sort((a, b) => a.endDate - b.endDate);
+}
+async function setLeasingReminderDismissed(vehicleId, dismissed) {
+  if (!canWrite()) return;
+  const v = vehicles.find((x) => x.id === vehicleId);
+  if (!v) return;
+  v.leasingReminderDismissed = Boolean(dismissed);
+  addHistory(
+    v,
+    dismissed ? "Leasing-Erinnerung ausgeblendet" : "Leasing-Erinnerung aktiviert",
+    v.master.AZ ? `Leasingende: ${formatDate(v.master.AZ)}` : "",
+  );
+  showLoading(
+    dismissed ? "Erinnerung ausblenden" : "Erinnerung aktivieren",
+    "Einstellung wird gespeichert …",
+  );
+  await waitForLoadingPaint();
+  try {
+    await persistVehicle(v);
+    renderDashboardLeasingDetail();
+    renderDashboard();
+  } catch (err) {
+    v.leasingReminderDismissed = !dismissed;
+    console.error(err);
+    alert("Die Einstellung konnte nicht gespeichert werden: " + (err.message || err));
+    renderDashboardLeasingDetail();
+  } finally {
+    hideLoading();
+  }
+}
+function renderDashboardLeasingDetail() {
+  const rows = dashboardLeasingContracts();
+  const activeRows = rows.filter((x) => !x.dismissed);
+  const hiddenRows = rows.filter((x) => x.dismissed);
+  dashboardDetailBase(
+    "Auslaufende/ausgelaufene Leasingverträge",
+    `${activeRows.length} aktive Erinnerung(en) · ${hiddenRows.length} ausgeblendet`,
+  );
+  $("#dashboardDetailContent").innerHTML = rows.length
+    ? `<div class="dashboard-detail-table leasing-detail-table">
+        <div class="dashboard-detail-head leasing-detail-head">
+          <span>Fahrzeug</span><span>Leasingende</span><span>Status</span><span>Nicht mehr erinnern</span><span></span>
+        </div>
+        ${rows.map((x) => {
+          const statusText = x.daysDifference < 0
+            ? `${Math.abs(x.daysDifference)} Tag(e) ausgelaufen`
+            : x.daysDifference === 0
+              ? "läuft heute aus"
+              : `läuft in ${x.daysDifference} Tag(en) aus`;
+          return `<div class="dashboard-detail-row leasing-detail-row ${x.dismissed ? "dismissed" : x.status}">
+            <span><strong>${esc(x.vehicle.displayName || "Fahrzeug")}</strong><small>${esc(x.vehicle.master.I || "")} ${esc(x.vehicle.master.J || "")}</small></span>
+            <span>${formatDate(x.vehicle.master.AZ)}</span>
+            <span><strong>${esc(statusText)}</strong>${x.dismissed ? "<small>Erinnerung ausgeblendet</small>" : ""}</span>
+            <span class="leasing-dismiss-cell"><label><input type="checkbox" data-leasing-dismiss="${x.vehicle.id}" ${x.dismissed ? "checked" : ""} ${canWrite() ? "" : "disabled"}> nicht mehr erinnern</label></span>
+            <span><button data-dashboard-open="${x.vehicle.id}" data-dashboard-tab="finanzierung">Öffnen</button></span>
+          </div>`;
+        }).join("")}
+      </div>`
+    : '<p class="empty-dashboard">Keine ausgelaufenen oder innerhalb der nächsten vier Monate auslaufenden Leasingverträge vorhanden.</p>';
+  $$("[data-dashboard-open]").forEach(
+    (b) => (b.onclick = () => openDashboardVehicle(b.dataset.dashboardOpen, b.dataset.dashboardTab)),
+  );
+  $$("[data-leasing-dismiss]").forEach(
+    (el) => (el.onchange = () => setLeasingReminderDismissed(el.dataset.leasingDismiss, el.checked)),
+  );
+}
+
 function dashboardSeverity(count) {
   return count === 0
     ? "status-good"
@@ -1778,6 +1888,10 @@ function renderDashboardFilesDetail() {
 }
 function renderDashboard() {
   const alerts = dashboardAlerts();
+  const leasingContracts = dashboardLeasingContracts();
+  const leasingReminders = leasingContracts.filter((x) => !x.dismissed);
+  const expiredLeasing = leasingReminders.filter((x) => x.status === "overdue").length;
+  const upcomingLeasing = leasingReminders.filter((x) => x.status === "soon").length;
   const currentDate = new Date(),
     currentData = dashboardMonthData(currentDate),
     series = dashboardLastTwelveMonths(),
@@ -1816,6 +1930,7 @@ function renderDashboard() {
   <button class="kpi kpi-clickable" data-dashboard-action="charges"><span>Interne Verrechnung</span><strong>${money(currentData.charge)}</strong><small>${dashboardPeriodLabel(currentDate)}</small></button>
   <button class="kpi kpi-clickable" data-dashboard-action="workshop"><span>Werkstattkosten</span><strong>${money(currentData.workshop)}</strong><small>${dashboardPeriodLabel(currentDate)}</small></button>
   <button class="kpi kpi-clickable ${dashboardSeverity(overdue)}" data-dashboard-action="overdue"><span>Überfällige Hinweise</span><strong>${overdue}</strong><small>${soon} weitere demnächst fällig</small></button>
+  <button class="kpi kpi-clickable ${leasingReminders.length === 0 ? "status-good" : expiredLeasing > 0 ? "status-danger" : "status-warning"}" data-dashboard-action="leasing"><span>Auslaufende/ausgelaufene Leasingverträge</span><strong>${leasingReminders.length}</strong><small>${expiredLeasing} ausgelaufen · ${upcomingLeasing} in den nächsten 4 Monaten</small></button>
   <button class="kpi kpi-clickable" data-dashboard-action="files"><span>Dokumente und Fotos</span><strong>${allDocs}</strong><small>${photoCount} Foto(s)</small></button>
  </div>
  <div class="dashboard-status-grid">
@@ -1859,6 +1974,7 @@ function renderDashboard() {
         else if (a === "alerts-all") renderDashboardAlertDetail("all");
         else if (a === "charges") renderDashboardMoneyDetail("charge");
         else if (a === "workshop") renderDashboardMoneyDetail("workshop");
+        else if (a === "leasing") renderDashboardLeasingDetail();
         else if (a === "files") renderDashboardFilesDetail();
       }),
   );
