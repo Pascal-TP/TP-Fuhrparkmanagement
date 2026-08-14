@@ -1,6 +1,7 @@
 import { fleetAuth, fleetDb, blazeFunctions } from "./firebase.js";
 import {
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   onAuthStateChanged,
   signOut,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
@@ -28,6 +29,7 @@ const tabs = [
   ["wartung", "Wartung / Reparatur / Pflege / Zubehör"],
   ["termine", "Terminübersicht"],
   ["dokumente", "Dokumente und Fotos"],
+  ["schaden", "Schadenregulierung"],
   ["kosten", "Kostenübersicht & €/km"],
 ];
 const monthlyTabs = new Set([
@@ -332,6 +334,7 @@ function normalizeVehicles() {
     v.leasingReminderDismissed = Boolean(v.leasingReminderDismissed);
     v.costSettings = { ...costDefaults, ...(v.costSettings || {}) };
     v.documents = v.documents || [];
+    v.damageFiles = v.damageFiles || [];
     v.appointments = v.appointments || [];
     v.history = v.history || [];
     v.annual = v.annual || {};
@@ -342,6 +345,9 @@ function normalizeVehicles() {
       v.monthly[String(y)] = v.monthly[String(y)] || createMonths(y);
       const ys = String(y),
         rows = v.monthly[ys];
+      rows.forEach((r) => {
+        if (r.taxMonthly === undefined || r.taxMonthly === null) r.taxMonthly = "";
+      });
       v.annual[ys] = v.annual[ys] || {
         insuranceAnnual: n((rows.find((r) => n(r.CD) > 0) || {}).CD),
         taxAnnual: n((rows.find((r) => n(r.CN) > 0) || {}).CN),
@@ -369,6 +375,8 @@ function bindStatic() {
   $("#loginForm").onsubmit = async (e) => {
     e.preventDefault();
     $("#loginMessage").textContent = "";
+    $("#loginMessage").classList.remove("success-text");
+    $("#loginMessage").classList.add("error-text");
     const email = $("#loginEmail").value.trim(),
       pw = $("#loginPassword").value;
     try {
@@ -380,6 +388,33 @@ function bindStatic() {
       console.error(err);
       $("#loginMessage").textContent =
         "Anmeldung fehlgeschlagen. Bitte E-Mail und Passwort prüfen.";
+    }
+  };
+  $("#forgotPasswordBtn").onclick = async () => {
+    const email = $("#loginEmail").value.trim();
+    $("#loginMessage").textContent = "";
+    if (!email) {
+      $("#loginMessage").textContent =
+        "Bitte zuerst die E-Mail-Adresse eingeben, für die das Passwort zurückgesetzt werden soll.";
+      $("#loginEmail").focus();
+      return;
+    }
+    try {
+      showLoading("Passwort zurücksetzen", "E-Mail zum Zurücksetzen des Passworts wird angefordert …");
+      fleetAuth.languageCode = "de";
+      await sendPasswordResetEmail(fleetAuth, email);
+      $("#loginMessage").classList.remove("error-text");
+      $("#loginMessage").classList.add("success-text");
+      $("#loginMessage").textContent =
+        "Die E-Mail zum Zurücksetzen des Passworts wurde versendet. Bitte auch den Spam-Ordner prüfen.";
+    } catch (err) {
+      console.error(err);
+      $("#loginMessage").classList.remove("success-text");
+      $("#loginMessage").classList.add("error-text");
+      $("#loginMessage").textContent =
+        "Die E-Mail zum Zurücksetzen des Passworts konnte nicht versendet werden. Bitte E-Mail-Adresse prüfen.";
+    } finally {
+      hideLoading();
     }
   };
   $("#logoutBtn").onclick = () => signOut(fleetAuth);
@@ -735,6 +770,7 @@ function renderContent() {
   $("#yearTools").classList.toggle("hidden", !monthlyTabs.has(activeTab));
   if (activeTab === "termine") renderAppointments();
   else if (activeTab === "dokumente") renderDocuments();
+  else if (activeTab === "schaden") renderDamageRegulation();
   else if (activeTab === "versicherung" || activeTab === "steuern")
     renderAnnualMonthly();
   else if (monthlyTabs.has(activeTab)) renderMonthly();
@@ -852,35 +888,66 @@ function renderAnnualMonthly() {
       : "Steuer pro Jahr (€)",
     monthlyCols = isInsurance
       ? sections.versicherung.filter((c) => c !== "CD")
-      : ["CO"];
-  const hasMonthly =
-      isInsurance && rows.some((r) => n(r.BY) + n(r.BZ) + n(r.CB) > 0),
+      : ["taxMonthly"];
+  const hasMonthly = isInsurance
+      ? rows.some((r) => n(r.BY) + n(r.BZ) + n(r.CB) > 0)
+      : rows.some((r) => n(r.taxMonthly) > 0),
     hasAnnual = n(annual[annualKey]) > 0;
-  let html = `<div class="content-panel"><div class="annual-entry ${hasMonthly ? "locked" : ""}"><label>${annualLabel}</label>${editing ? `<input id="annualValue" type="number" step="0.01" value="${round2(annual[annualKey])}" ${hasMonthly ? "disabled" : ""}>` : `<strong>${money(annual[annualKey])}</strong>`}${isInsurance ? `<small>${hasMonthly ? "Jahresbetrag gesperrt, da monatliche Versicherungswerte vorhanden sind." : hasAnnual ? "Alle monatlichen Versicherungsfelder dieses Jahres sind gesperrt." : "Alternativ kann der Beitrag monatlich erfasst werden."}</small>` : ""}</div><div class="monthly-wrap"><table class="monthly-table"><thead><tr><th>Feld</th>${rows.map((r) => `<th>${r.monthName}</th>`).join("")}<th>Jahr</th></tr></thead><tbody>`;
+
+  const hint = hasMonthly
+    ? `${isInsurance ? "Jahresbeitrag" : "Jahressteuer"} gesperrt, da monatliche Werte vorhanden sind.`
+    : hasAnnual
+      ? `Alle monatlichen ${isInsurance ? "Versicherungsfelder" : "Steuerfelder"} dieses Jahres sind gesperrt.`
+      : `Alternativ kann der Betrag monatlich erfasst werden.`;
+
+  let html = `<div class="content-panel"><div class="annual-entry ${hasMonthly ? "locked" : ""}"><label>${annualLabel}</label>${editing ? `<input id="annualValue" type="number" step="0.01" value="${round2(annual[annualKey])}" ${hasMonthly ? "disabled" : ""}>` : `<strong>${money(annual[annualKey])}</strong>`}<small>${hint}</small></div><div class="monthly-wrap"><table class="monthly-table"><thead><tr><th>Feld</th>${rows.map((r) => `<th>${r.monthName}</th>`).join("")}<th>Jahr</th></tr></thead><tbody>`;
+
   for (const col of monthlyCols) {
-    const calc = calculatedCols.has(col);
-    html += `<tr class="${calc ? "calculated-row" : ""}"><td>${esc(headers[col] || col)}${calc ? " · berechnet" : ""}</td>`;
+    const isTaxMonthly = col === "taxMonthly";
+    const calc = !isTaxMonthly && calculatedCols.has(col);
+    const label = isTaxMonthly ? "Steuer pro Monat (€)" : (headers[col] || col);
+    html += `<tr class="${calc ? "calculated-row" : ""}"><td>${esc(label)}${calc ? " · berechnet" : ""}</td>`;
     let sum = 0;
     rows.forEach((r, i) => {
-      sum += n(r[col]);
-      const lock =
-        calc || (isInsurance && hasAnnual && ["BY", "BZ", "CB"].includes(col));
-      html += `<td>${editing ? monthlyInput(col, r[col], i, lock) : displayMonthly(col, r[col])}</td>`;
+      const value = isTaxMonthly ? r.taxMonthly : r[col];
+      sum += n(value);
+      const lock = calc || (hasAnnual && (isTaxMonthly || ["BY", "BZ", "CB"].includes(col)));
+      if (isTaxMonthly) {
+        html += `<td>${editing ? `<input type="number" step="0.01" data-tax-month="${i}" value="${value === "" || value === null || value === undefined ? "" : esc(round2(value))}" ${lock ? "disabled" : ""}>` : money(r.CO)}</td>`;
+      } else {
+        html += `<td>${editing ? monthlyInput(col, value, i, lock) : displayMonthly(col, value)}</td>`;
+      }
     });
-    html += `<td>${moneyCols.has(col) ? money(sum) : num(sum)}</td></tr>`;
+    const annualSum = isTaxMonthly && hasAnnual ? n(annual.taxAnnual) : sum;
+    html += `<td>${money(annualSum)}</td></tr>`;
   }
   html += "</tbody></table></div></div>";
   $("#tabContent").innerHTML = html;
   bindInputs();
+
+  $$('[data-tax-month]').forEach((el) => {
+    const handler = () => {
+      const row = v.monthly?.[year]?.[Number(el.dataset.taxMonth)];
+      if (!row) return;
+      row.taxMonthly = el.value === "" ? "" : round2(el.value);
+      recalc(v, year);
+    };
+    el.oninput = handler;
+    el.onchange = () => {
+      handler();
+      renderAnnualMonthly();
+    };
+  });
+
   const inp = $("#annualValue");
   if (inp) {
     const updateAnnual = () => {
-      annual[annualKey] = round2(inp.value);
+      annual[annualKey] = inp.value === "" ? 0 : round2(inp.value);
       recalc(v, year);
       renderAnnualMonthly();
     };
     inp.oninput = () => {
-      annual[annualKey] = round2(inp.value);
+      annual[annualKey] = inp.value === "" ? 0 : round2(inp.value);
       recalc(v, year);
     };
     inp.onchange = updateAnnual;
@@ -941,6 +1008,15 @@ function applyMutualLocks() {
       if (["BY", "BZ", "CB"].includes(el.dataset.col)) el.disabled = annual > 0;
     });
   }
+  if (activeTab === "steuern") {
+    const annual = n(draft.annual?.[year]?.taxAnnual);
+    const hasMonthly = (draft.monthly?.[year] || []).some((r) => n(r.taxMonthly) > 0);
+    const annualInput = $("#annualValue");
+    if (annualInput) annualInput.disabled = hasMonthly;
+    $$("[data-tax-month]").forEach((el) => {
+      el.disabled = annual > 0;
+    });
+  }
 }
 
 function formatValue(col, v) {
@@ -970,7 +1046,7 @@ function recalc(v, y) {
     );
     const annualTax = n(annual.taxAnnual);
     r.CN = annualTax;
-    r.CO = round2(annualTax / 12);
+    r.CO = round2(annualTax > 0 ? annualTax / 12 : n(r.taxMonthly));
     r.DH = round2(n(r.CU) + n(r.CY) + n(r.DC) + n(r.DG));
     const ownerSame = (v.master.AN || "") === (v.master.AO || "");
     const shelf =
@@ -1392,6 +1468,106 @@ function formatDate(v) {
     ? new Date(v + "T00:00:00").toLocaleDateString("de-DE")
     : "Ohne Datum";
 }
+async function renderDamageRegulation() {
+  const v = current(),
+    files = v.damageFiles || [];
+  const writable = canWrite();
+  $("#tabContent").innerHTML =
+    `<div class="content-panel"><div class="documents-head"><div><h3>Schadenregulierung</h3><small>${files.length} Datei(en) zum Schadenfall, gespeichert im zentralen KalkPro-Storage</small></div></div>${writable ? '<div class="upload-box"><strong>Dokumente und Fotos zur Schadenregulierung hinzufügen</strong><p>Fotos bis 5 MB sowie PDF-, Word-, Excel-, PowerPoint- und Textdateien bis 10 MB.</p><input id="damageFileUpload" type="file" multiple accept="image/jpeg,image/png,image/webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.rtf,.odt,.ods,.odp"></div>' : ""}<div class="document-list">${files.length ? files.map((f) => `<div class="document-row"><div class="${String(f.contentType || "").startsWith("image/") ? "" : "doc-icon"}">${String(f.contentType || "").startsWith("image/") ? "🖼️" : "📄"}</div><div><strong>${esc(f.name)}</strong><small>${new Date(f.uploadedAt).toLocaleString("de-DE")} · ${Math.round(n(f.size) / 1024)} KB</small></div><div>${esc(f.category || "Schadendokument")}</div><div class="document-actions"><button data-open-damage-file="${f.id}">Öffnen</button>${writable ? `<button class="danger" data-delete-damage-file="${f.id}">Löschen</button>` : ""}</div></div>`).join("") : "<p>Noch keine Dokumente oder Fotos zur Schadenregulierung vorhanden.</p>"}</div></div>`;
+
+  if (writable) $("#damageFileUpload").onchange = uploadDamageFiles;
+  $$('[data-open-damage-file]').forEach((b) =>
+    (b.onclick = async () => {
+      try {
+        const file = v.damageFiles.find((x) => x.id === b.dataset.openDamageFile);
+        if (!file) return;
+        showLoading("Datei öffnen", `${file.name} wird vorbereitet …`);
+        const getUrls = httpsCallable(blazeFunctions, "getFleetVehicleFileUrls");
+        const result = await getUrls({
+          idToken: await fleetAuth.currentUser.getIdToken(),
+          vehicleId: v.id,
+          paths: [file.path],
+        });
+        const url = result.data?.files?.[0]?.url;
+        if (!url) throw new Error("Datei konnte nicht geöffnet werden.");
+        window.open(url, "_blank");
+      } catch (err) {
+        console.error(err);
+        alert(err.message || "Datei konnte nicht geöffnet werden.");
+      } finally {
+        hideLoading();
+      }
+    }),
+  );
+  $$('[data-delete-damage-file]').forEach((b) =>
+    (b.onclick = async () => {
+      if (!confirm("Datei zur Schadenregulierung wirklich löschen?")) return;
+      try {
+        const file = v.damageFiles.find((x) => x.id === b.dataset.deleteDamageFile);
+        if (!file) return;
+        showLoading("Datei löschen", `${file.name} wird gelöscht …`);
+        const del = httpsCallable(blazeFunctions, "deleteFleetVehicleFile");
+        await del({
+          idToken: await fleetAuth.currentUser.getIdToken(),
+          vehicleId: v.id,
+          path: file.path,
+        });
+        v.damageFiles = v.damageFiles.filter((x) => x.id !== file.id);
+        addHistory(v, "Schadendatei gelöscht", file.name);
+        await persistVehicle(v);
+        renderDamageRegulation();
+      } catch (err) {
+        console.error(err);
+        alert(err.message || "Datei konnte nicht gelöscht werden.");
+      } finally {
+        hideLoading();
+      }
+    }),
+  );
+}
+
+async function uploadDamageFiles(e) {
+  if (!canWrite()) return alert("Für diese Aktion fehlt die Berechtigung.");
+  const input = e.target;
+  input.disabled = true;
+  const filesToUpload = Array.from(input.files || []);
+  showLoading("Schadendateien hochladen", `${filesToUpload.length} Datei(en) werden vorbereitet …`, 0);
+  await waitForLoadingPaint();
+  try {
+    const v = current();
+    for (let i = 0; i < filesToUpload.length; i++) {
+      const file = filesToUpload[i];
+      updateLoading(`Datei ${i + 1} von ${filesToUpload.length}: ${file.name}`, (i / Math.max(1, filesToUpload.length)) * 90);
+      const base64Data = await fileToBase64(file);
+      const upload = httpsCallable(blazeFunctions, "uploadFleetVehicleFile");
+      const result = await upload({
+        idToken: await fleetAuth.currentUser.getIdToken(),
+        vehicleId: v.id,
+        fileName: file.name,
+        contentType: file.type || "application/octet-stream",
+        base64Data,
+      });
+      const meta = result.data?.file;
+      if (!meta) throw new Error(`Upload von ${file.name} ohne Rückmeldung.`);
+      meta.category = String(meta.contentType || "").startsWith("image/") ? "Schadenfoto" : "Schadendokument";
+      v.damageFiles = v.damageFiles || [];
+      v.damageFiles.push(meta);
+      addHistory(v, "Schadendatei hochgeladen", file.name);
+    }
+    updateLoading("Dateimetadaten werden gespeichert …", 95);
+    await persistVehicle(v);
+    updateLoading("Upload abgeschlossen.", 100);
+    await renderDamageRegulation();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Upload fehlgeschlagen.");
+  } finally {
+    input.disabled = false;
+    input.value = "";
+    hideLoading();
+  }
+}
+
 async function renderDocuments() {
   const v = current(),
     files = v.documents || [];
