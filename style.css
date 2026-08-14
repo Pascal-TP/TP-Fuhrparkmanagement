@@ -1534,3 +1534,19 @@ textarea {
 .leasing-dismiss-cell input:disabled + * {
   cursor: default;
 }
+
+/* V2.9 – Passwort zurücksetzen */
+.login-link {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: #315f7d;
+  padding: 0;
+  margin: -4px 0 8px;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  cursor: pointer;
+  box-shadow: none;
+}
+.login-link:hover { background: transparent; color: #173e58; }
+.success-text { color: #237a3b; }
