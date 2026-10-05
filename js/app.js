@@ -119,6 +119,7 @@ const moneyCols = new Set([
   "DT",
   "DU",
   "DW",
+  "LEASE_KM_RATE",
 ]);
 const dropdowns = {
   K: [
@@ -341,6 +342,11 @@ function normalizeVehicles() {
     v.master.LENGTH = v.master.LENGTH || "";
     v.master.WIDTH = v.master.WIDTH || "";
     v.master.HEIGHT = v.master.HEIGHT || "";
+    v.master.LEASE_KM_MONTHLY = v.master.LEASE_KM_MONTHLY ?? "";
+    v.master.LEASE_KM_ANNUAL = v.master.LEASE_KM_ANNUAL ?? "";
+    v.master.LEASE_KM_TOTAL = v.master.LEASE_KM_TOTAL ?? "";
+    v.master.LEASE_KM_RATE = v.master.LEASE_KM_RATE ?? "";
+    v.master.LEASE_KM_SOURCE = v.master.LEASE_KM_SOURCE || "";
     for (const y of [2025, 2026, 2027, 2028, 2029, 2030]) {
       v.monthly[String(y)] = v.monthly[String(y)] || createMonths(y);
       const ys = String(y),
@@ -783,7 +789,7 @@ function inputFor(col, val, path, disabled = false) {
     return `<textarea data-path="${path}" rows="3" ${disabled ? "disabled" : ""}>${esc(val)}</textarea>`;
   const type = dateCols.has(col)
     ? "date"
-    : moneyCols.has(col) || ["S", "U", "V", "X", "AA", "AE", "BF"].includes(col)
+    : moneyCols.has(col) || ["S", "U", "V", "X", "AA", "AE", "BF", "LEASE_KM_MONTHLY", "LEASE_KM_ANNUAL", "LEASE_KM_TOTAL"].includes(col)
       ? "number"
       : "text";
   const shown =
@@ -797,6 +803,8 @@ function renderMaster() {
     cols = [...(sections[activeTab] || [])];
   if (activeTab === "stammdaten")
     cols.splice(cols.indexOf("X") + 1, 0, "LENGTH", "WIDTH", "HEIGHT");
+  if (activeTab === "finanzierung")
+    cols.push("LEASE_KM_MONTHLY", "LEASE_KM_ANNUAL", "LEASE_KM_TOTAL", "LEASE_KM_RATE");
   if (activeTab === "eigentum") {
     const now = new Date(),
       cy = String(now.getFullYear()),
@@ -819,6 +827,10 @@ function renderMaster() {
         WIDTH: "Breite (mm)",
         HEIGHT: "Höhe (mm)",
         AP: "Interner Verrechnungsbetrag (€/Monat) für aktuellen Monat/Jahr",
+        LEASE_KM_MONTHLY: "Kilometerlimit pro Monat (km)",
+        LEASE_KM_ANNUAL: "Kilometerlimit pro Jahr (km)",
+        LEASE_KM_TOTAL: "Kilometerlimit gesamte Leasingzeit (km)",
+        LEASE_KM_RATE: "Mehrkilometerkosten (€/km)",
       }[col] ||
       headers[col] ||
       col;
@@ -958,16 +970,21 @@ function renderAnnualMonthly() {
 function bindInputs() {
   if (!editing || !draft) return;
   $$("[data-path]").forEach((el) => {
-    const handler = () => {
+    const handler = (event) => {
       const parts = el.dataset.path.split(".");
       if (parts[0] !== "master" || !parts[1]) return;
       const col = parts[1];
       draft.master[col] = el.value;
+      if (["LEASE_KM_MONTHLY", "LEASE_KM_ANNUAL", "LEASE_KM_TOTAL"].includes(col)) {
+        draft.master.LEASE_KM_SOURCE = el.value === "" ? "" : col;
+        syncLeasingKmLimits(draft, col);
+      }
+      if (["AY", "AZ"].includes(col)) syncLeasingKmLimits(draft, draft.master.LEASE_KM_SOURCE || "LEASE_KM_ANNUAL");
       if (col === "BA" && n(el.value) > 0) draft.master.BB = "";
       if (col === "BB" && n(el.value) > 0) draft.master.BA = "";
       for (const y of [2025, 2026, 2027, 2028, 2029, 2030])
         recalc(draft, String(y));
-      if (["BA", "BB"].includes(col)) renderContent();
+      if (event?.type === "change" && ["BA", "BB", "AY", "AZ", "LEASE_KM_MONTHLY", "LEASE_KM_ANNUAL", "LEASE_KM_TOTAL"].includes(col)) renderContent();
     };
     el.oninput = handler;
     el.onchange = handler;
@@ -986,6 +1003,43 @@ function bindInputs() {
     el.onchange = handler;
   });
   applyMutualLocks();
+}
+function leasingDurationMonths(v) {
+  const start = String(v?.master?.AY || ""), end = String(v?.master?.AZ || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return 0;
+  const a = new Date(start + "T00:00:00"), b = new Date(end + "T00:00:00");
+  if (!Number.isFinite(a.getTime()) || !Number.isFinite(b.getTime()) || b <= a) return 0;
+  let months = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+  if (b.getDate() < a.getDate()) months -= 1;
+  return Math.max(0, months);
+}
+function syncLeasingKmLimits(v, source) {
+  if (!v?.master) return;
+  const m = v.master, duration = leasingDurationMonths(v);
+  const monthly = n(m.LEASE_KM_MONTHLY), annual = n(m.LEASE_KM_ANNUAL), total = n(m.LEASE_KM_TOTAL);
+  if (source === "LEASE_KM_MONTHLY" && monthly > 0) {
+    m.LEASE_KM_ANNUAL = round2(monthly * 12);
+    m.LEASE_KM_TOTAL = duration > 0 ? round2(monthly * duration) : "";
+  } else if (source === "LEASE_KM_ANNUAL" && annual > 0) {
+    m.LEASE_KM_MONTHLY = round2(annual / 12);
+    m.LEASE_KM_TOTAL = duration > 0 ? round2((annual / 12) * duration) : "";
+  } else if (source === "LEASE_KM_TOTAL" && total > 0) {
+    if (duration > 0) {
+      m.LEASE_KM_MONTHLY = round2(total / duration);
+      m.LEASE_KM_ANNUAL = round2((total / duration) * 12);
+    } else {
+      m.LEASE_KM_MONTHLY = "";
+      m.LEASE_KM_ANNUAL = "";
+    }
+  } else if (duration > 0) {
+    if (annual > 0) {
+      m.LEASE_KM_MONTHLY = round2(annual / 12);
+      m.LEASE_KM_TOTAL = round2((annual / 12) * duration);
+    } else if (monthly > 0) {
+      m.LEASE_KM_ANNUAL = round2(monthly * 12);
+      m.LEASE_KM_TOTAL = round2(monthly * duration);
+    }
+  }
 }
 function applyMutualLocks() {
   if (!editing || !draft) return;
@@ -1024,6 +1078,7 @@ function formatValue(col, v) {
   if (dateCols.has(col) && /^\d{4}-\d{2}-\d{2}$/.test(String(v)))
     return new Date(v + "T00:00:00").toLocaleDateString("de-DE");
   if (moneyCols.has(col)) return money(v);
+  if (["LEASE_KM_MONTHLY", "LEASE_KM_ANNUAL", "LEASE_KM_TOTAL"].includes(col)) return `${num(v)} km`;
   if (typeof v === "boolean") return v ? "Ja" : "Nein";
   return esc(v);
 }
@@ -2197,6 +2252,16 @@ function submitChargeExport(e) {
   );
   closeModal("chargeExportModal");
 }
+function currentVehicleKm(v) {
+  const years = Object.keys(v.monthly || {}).sort((a, b) => Number(b) - Number(a));
+  for (const y of years) {
+    const rows = v.monthly?.[y] || [];
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (n(rows[i]?.BJ) > 0) return round2(rows[i].BJ);
+    }
+  }
+  return round2(v.master?.BJ || v.master?.BH || 0);
+}
 function vehicleCsv() {
   const cols = [
     "Status",
@@ -2222,8 +2287,15 @@ function vehicleCsv() {
     "AZ",
     "BA",
     "BB",
+    "LEASE_KM_TOTAL",
+    "BJ",
   ];
-  const labels = { Status: "Status", ...headers };
+  const labels = {
+    Status: "Status",
+    ...headers,
+    LEASE_KM_TOTAL: "Kilometerlimit gesamte Leasingzeit (km)",
+    BJ: "Aktueller km-Stand",
+  };
   return [
     cols.map((c) => labels[c] || c),
     ...vehicles.map((v) =>
@@ -2234,7 +2306,9 @@ function vehicleCsv() {
             : v.active
               ? "Aktiv"
               : "Inaktiv"
-          : (v.master[c] ?? ""),
+          : c === "BJ"
+            ? currentVehicleKm(v)
+            : (v.master[c] ?? ""),
       ),
     ),
   ];
