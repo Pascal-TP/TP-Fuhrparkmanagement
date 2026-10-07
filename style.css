@@ -1550,3 +1550,43 @@ textarea {
 }
 .login-link:hover { background: transparent; color: #173e58; }
 .success-text { color: #237a3b; }
+
+/* V2.11 – konfigurierbare Firmenlisten */
+.company-settings {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #dfe5e8;
+}
+.company-settings-head h4 { margin: 0 0 4px; }
+.company-settings-head p { margin: 0 0 14px; color: #607d8b; font-size: 13px; }
+.company-setting-group {
+  border: 1px solid #dfe5e8;
+  border-radius: 9px;
+  padding: 12px;
+  background: #fafbfb;
+  margin-top: 10px;
+}
+.company-setting-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+.company-setting-list { display: grid; gap: 8px; }
+.company-setting-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.company-setting-row input { min-width: 0; }
+.company-setting-row button { white-space: nowrap; }
+.company-empty { color: #78909c; font-size: 13px; padding: 5px 0; }
+button.small { padding: 7px 10px; font-size: 12px; }
+button.danger.subtle { background: #fff; color: #b3261e; border: 1px solid #e5b7b3; }
+button.danger.subtle:hover { background: #fff4f3; }
+@media (max-width: 620px) {
+  .company-setting-title, .company-setting-row { grid-template-columns: 1fr; display: grid; }
+  .company-setting-title button, .company-setting-row button { width: 100%; }
+}

@@ -271,6 +271,20 @@
               /><small>Tage vor Fälligkeit</small></label
             >
           </div>
+          <div class="company-settings">
+            <div class="company-settings-head">
+              <h4>Firmenlisten</h4>
+              <p>Diese Listen steuern die Auswahlfelder in der Fahrzeugkartei. Das Entfernen einer Firma verändert keine bereits gespeicherten Fahrzeugdaten.</p>
+            </div>
+            <section class="company-setting-group">
+              <div class="company-setting-title"><strong>Eigentümer</strong><button type="button" id="addOwnerCompany" class="secondary small">+ weitere Firma</button></div>
+              <div id="ownerCompanyList" class="company-setting-list"></div>
+            </section>
+            <section class="company-setting-group">
+              <div class="company-setting-title"><strong>Nutzende Firma</strong><button type="button" id="addUserCompany" class="secondary small">+ weitere Firma</button></div>
+              <div id="userCompanyList" class="company-setting-list"></div>
+            </section>
+          </div>
           <div class="modal-actions">
             <button type="button" data-close="settingsModal" class="secondary">
               Abbrechen</button
