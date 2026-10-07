@@ -213,6 +213,8 @@ const defaultSettings = {
   appointmentDays: 30,
   remindLeasing: true,
   leasingDays: 120,
+  ownerCompanies: ["TP Holding", "NDF", "TGA", "Retanol", "Vasil Laska"],
+  userCompanies: ["TP Holding", "NDF", "TGA"],
 };
 let baseData,
   vehicles,
@@ -782,9 +784,21 @@ function renderContent() {
   else if (monthlyTabs.has(activeTab)) renderMonthly();
   else renderMaster();
 }
+function companyOptions(col, currentValue = "") {
+  const configured = col === "AN" ? settings.ownerCompanies : settings.userCompanies;
+  const fallback = dropdowns[col] || [];
+  const list = [...new Set((Array.isArray(configured) ? configured : fallback).map((x) => String(x || "").trim()).filter(Boolean))];
+  const current = String(currentValue || "").trim();
+  // Ein bereits am Fahrzeug gespeicherter Wert bleibt auswählbar, auch wenn
+  // die Firma später aus den allgemeinen Einstellungen entfernt wurde.
+  if (current && !list.includes(current)) list.unshift(current);
+  return list;
+}
 function inputFor(col, val, path, disabled = false) {
-  if (dropdowns[col])
-    return `<select data-path="${path}" ${disabled ? "disabled" : ""}><option value=""></option>${dropdowns[col].map((x) => `<option ${String(val) === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>`;
+  if (dropdowns[col]) {
+    const options = ["AN", "AO"].includes(col) ? companyOptions(col, val) : dropdowns[col];
+    return `<select data-path="${path}" ${disabled ? "disabled" : ""}><option value=""></option>${options.map((x) => `<option ${String(val) === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>`;
+  }
   if (textAreaCols.has(col))
     return `<textarea data-path="${path}" rows="3" ${disabled ? "disabled" : ""}>${esc(val)}</textarea>`;
   const type = dateCols.has(col)
@@ -2436,6 +2450,45 @@ async function replaceAllCloudData() {
   updateLoading("Neue Fahrzeugdaten werden geschrieben …", 40);
   await importInitialVehicles();
 }
+function normalizeCompanyList(values) {
+  return [...new Set((values || []).map((x) => String(x || "").trim()).filter(Boolean))];
+}
+function renderCompanySettings() {
+  const renderList = (id, values, type) => {
+    const box = $(id);
+    if (!box) return;
+    const list = Array.isArray(values) ? values : [];
+    box.innerHTML = list.length
+      ? list.map((name, i) => `<div class="company-setting-row"><input type="text" value="${esc(name)}" data-company-type="${type}" data-company-index="${i}" aria-label="Firma"><button type="button" class="danger subtle" data-remove-company="${type}" data-company-index="${i}">Entfernen</button></div>`).join("")
+      : '<div class="company-empty">Noch keine Firma hinterlegt.</div>';
+  };
+  renderList("#ownerCompanyList", settings.ownerCompanies, "owner");
+  renderList("#userCompanyList", settings.userCompanies, "user");
+
+  $$("[data-remove-company]").forEach((btn) => {
+    btn.onclick = () => {
+      syncCompanySettingsFromUi();
+      const key = btn.dataset.removeCompany === "owner" ? "ownerCompanies" : "userCompanies";
+      settings[key].splice(Number(btn.dataset.companyIndex), 1);
+      renderCompanySettings();
+    };
+  });
+}
+function syncCompanySettingsFromUi() {
+  const owners = $$('[data-company-type="owner"]').map((el) => el.value);
+  const users = $$('[data-company-type="user"]').map((el) => el.value);
+  if ($("#ownerCompanyList")) settings.ownerCompanies = normalizeCompanyList(owners);
+  if ($("#userCompanyList")) settings.userCompanies = normalizeCompanyList(users);
+}
+function addCompanySetting(type) {
+  syncCompanySettingsFromUi();
+  const key = type === "owner" ? "ownerCompanies" : "userCompanies";
+  settings[key] = normalizeCompanyList(settings[key]);
+  settings[key].push("");
+  renderCompanySettings();
+  const inputs = $$(`[data-company-type="${type}"]`);
+  inputs[inputs.length - 1]?.focus();
+}
 function openSettings() {
   if (!isAdmin()) return;
   const f = $("#settingsForm");
@@ -2444,12 +2497,18 @@ function openSettings() {
     if (f.elements[k].type === "checkbox") f.elements[k].checked = Boolean(v);
     else f.elements[k].value = v;
   }
+  renderCompanySettings();
+  $("#addOwnerCompany").onclick = () => addCompanySetting("owner");
+  $("#addUserCompany").onclick = () => addCompanySetting("user");
   openModal("settingsModal");
 }
 async function saveSettings(e) {
   if (!isAdmin()) return;
   e.preventDefault();
   const f = e.target;
+  syncCompanySettingsFromUi();
+  const ownerCompanies = normalizeCompanyList(settings.ownerCompanies);
+  const userCompanies = normalizeCompanyList(settings.userCompanies);
   settings = {
     remindFirstAid: f.remindFirstAid.checked,
     firstAidDays: Number(f.firstAidDays.value || 0),
@@ -2461,6 +2520,8 @@ async function saveSettings(e) {
     appointmentDays: Number(f.appointmentDays.value || 0),
     remindLeasing: f.remindLeasing.checked,
     leasingDays: Number(f.leasingDays.value || 0),
+    ownerCompanies,
+    userCompanies,
   };
   showLoading("Einstellungen speichern", "Erinnerungseinstellungen werden gespeichert …");
   try {
