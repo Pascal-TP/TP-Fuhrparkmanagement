@@ -340,6 +340,7 @@ function normalizeVehicles() {
     v.damageFiles = v.damageFiles || [];
     v.appointments = v.appointments || [];
     v.history = v.history || [];
+    v.financingHistory = Array.isArray(v.financingHistory) ? v.financingHistory : [];
     v.annual = v.annual || {};
     v.master.LENGTH = v.master.LENGTH || "";
     v.master.WIDTH = v.master.WIDTH || "";
@@ -874,12 +875,11 @@ function chargeBreakdown(v) {
   const s = v.costSettings || costDefaults,
     items = [];
   if (s.financing) {
-    const finance =
-      n(v.master.BA) > 0
-        ? ["Leasingrate", n(v.master.BA)]
-        : n(v.master.BB) > 0
-          ? ["Interne Miete", n(v.master.BB)]
-          : null;
+    const currentFinancing = financingForMonth(v, y, now.getMonth());
+    const currentAmount = financingAmount(v, y, now.getMonth());
+    const finance = currentAmount > 0 ? [
+      /leasing|mietkauf/i.test(currentFinancing.kind) ? "Leasingrate" : "Interne Miete", currentAmount
+    ] : null;
     if (finance) items.push(finance);
   }
   if (
@@ -994,8 +994,7 @@ function bindInputs() {
         syncLeasingKmLimits(draft, col);
       }
       if (["AY", "AZ"].includes(col)) syncLeasingKmLimits(draft, draft.master.LEASE_KM_SOURCE || "LEASE_KM_ANNUAL");
-      if (col === "BA" && n(el.value) > 0) draft.master.BB = "";
-      if (col === "BB" && n(el.value) > 0) draft.master.BA = "";
+      // Leasingrate und interne Miete dürfen für unterschiedliche Zeiträume nebeneinander bestehen.
       for (const y of [2025, 2026, 2027, 2028, 2029, 2030])
         recalc(draft, String(y));
       if (event?.type === "change" && ["BA", "BB", "AY", "AZ", "LEASE_KM_MONTHLY", "LEASE_KM_ANNUAL", "LEASE_KM_TOTAL"].includes(col)) renderContent();
@@ -1061,8 +1060,8 @@ function applyMutualLocks() {
     const leasing = $('[data-path="master.BA"]'),
       rent = $('[data-path="master.BB"]');
     if (leasing && rent) {
-      leasing.disabled = n(draft.master.BB) > 0;
-      rent.disabled = n(draft.master.BA) > 0;
+      leasing.disabled = false;
+      rent.disabled = false;
     }
   }
   if (activeTab === "versicherung") {
@@ -1096,6 +1095,51 @@ function formatValue(col, v) {
   if (typeof v === "boolean") return v ? "Ja" : "Nein";
   return esc(v);
 }
+// Historisierte Finanzierung: bestehende Fahrzeugwerte bleiben als Basis erhalten.
+// Der Stichtag ist der Monat des Leasingendes (Tag 1-15) bzw. der Folgemonat (Tag 16-31).
+function financingChangeMonth(dateValue) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateValue || ""));
+  if (!match) return "";
+  const [_, y, m, d] = match;
+  const date = new Date(Date.UTC(Number(y), Number(m) - 1 + (Number(d) > 15 ? 1 : 0), 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+function financingSnapshot(master) {
+  return { kind: String(master.AW || ""), lease: n(master.BA), rent: n(master.BB) };
+}
+function financingForMonth(v, year, index) {
+  const key = `${year}-${String(index + 1).padStart(2, "0")}`;
+  const periods = Array.isArray(v.financingHistory) ? v.financingHistory : [];
+  let selected = periods.length ? periods[0].values : financingSnapshot(v.master);
+  for (const period of periods) {
+    if (period.from <= key) selected = period.values;
+    else break;
+  }
+  return selected || financingSnapshot(v.master);
+}
+function financingAmount(v, year, index) {
+  const f = financingForMonth(v, year, index);
+  if (/leasing|mietkauf/i.test(f.kind)) return n(f.lease);
+  if (/kauf|miete/i.test(f.kind)) return n(f.rent);
+  return n(f.lease) || n(f.rent);
+}
+function ensureFinancingHistory(previous, updated) {
+  const before = financingSnapshot(previous.master);
+  const after = financingSnapshot(updated.master);
+  const oldPeriods = Array.isArray(previous.financingHistory) ? structuredClone(previous.financingHistory) : [];
+  if (JSON.stringify(before) === JSON.stringify(after)) {
+    updated.financingHistory = oldPeriods;
+    return;
+  }
+  const change = financingChangeMonth(updated.master.AZ || previous.master.AZ);
+  if (!change) throw new Error("Für eine Änderung der Finanzierungsart, Leasingrate oder internen Miete muss ein gültiges Leasingende als Stichtag hinterlegt sein.");
+  const periods = oldPeriods.length ? oldPeriods : [{from:"0000-01", values:before}];
+  const existing = periods.findIndex(p => p.from === change);
+  if (existing >= 0) periods[existing].values = after;
+  else periods.push({from:change, values:after});
+  periods.sort((a,b) => a.from.localeCompare(b.from));
+  updated.financingHistory = periods;
+}
 function recalc(v, y) {
   const rows = v.monthly[y] || [],
     annual = v.annual?.[y] || { insuranceAnnual: 0, taxAnnual: 0 };
@@ -1125,7 +1169,7 @@ function recalc(v, y) {
     const buy = n(v.master.BF) > 0 ? n(v.master.AV) / n(v.master.BF) : 0;
     const fixedBuy = buy + shelf + r.CE + r.CO + n(r.CQ),
       fixedLease = n(v.master.BA) + shelf + r.CE + r.CO + n(r.CQ),
-      fixedRent = n(v.master.BB) + shelf + r.CE + r.CO + n(r.CQ);
+      fixedRent = n(financingForMonth(v, y, i).rent) + shelf + r.CE + r.CO + n(r.CQ);
     r.DS = round2(fixedBuy);
     r.DT = round2(fixedLease);
     r.DU = round2(fixedRent);
@@ -1133,28 +1177,28 @@ function recalc(v, y) {
       fuel = n(r.BR);
     r.DJ = round2(ownerSame && buy > 0 ? fixedBuy + workshop + fuel : 0);
     r.DK = round2(
-      ownerSame && n(v.master.BA) > 0 ? fixedLease + workshop + fuel : 0,
+      ownerSame && /leasing|mietkauf/i.test(financingForMonth(v, y, i).kind) ? fixedLease + workshop + fuel : 0,
     );
     r.DL = round2(
-      ownerSame && n(v.master.BB) > 0 ? fixedRent + workshop + fuel : 0,
+      ownerSame && /kauf|miete/i.test(financingForMonth(v, y, i).kind) ? fixedRent + workshop + fuel : 0,
     );
-    const baseCharge = calcCharge(v, r);
+    const baseCharge = calcCharge(v, r, y, i);
     r.DW = round2(baseCharge);
     r.DM = round2(!ownerSame ? baseCharge : 0);
     r.DN = round2(
       !ownerSame && buy > 0 ? Math.max(0, fixedBuy - baseCharge) : 0,
     );
     r.DO = round2(
-      !ownerSame && n(v.master.BA) > 0
+      !ownerSame && /leasing|mietkauf/i.test(financingForMonth(v, y, i).kind)
         ? Math.max(0, fixedLease - baseCharge)
         : 0,
     );
     r.DP = round2(
-      !ownerSame && n(v.master.BB) > 0
+      !ownerSame && /kauf|miete/i.test(financingForMonth(v, y, i).kind)
         ? Math.max(0, fixedRent - baseCharge)
         : 0,
     );
-    const ownerCost = r.DL || r.DK || r.DJ;
+    const ownerCost = /leasing|mietkauf/i.test(financingForMonth(v, y, i).kind) ? r.DK : /kauf|miete/i.test(financingForMonth(v, y, i).kind) ? r.DL : r.DJ;
     r.DQ = round2(r.BL > 0 ? ownerCost / r.BL : 0);
     r.DR = round2(r.BL > 0 ? r.DM / r.BL : 0);
   });
@@ -1168,17 +1212,11 @@ function recalc(v, y) {
   if (String(now.getFullYear()) === String(y))
     v.master.AP = rows[now.getMonth()]?.DW || 0;
 }
-function calcCharge(v, r) {
+function calcCharge(v, r, year, monthIndex) {
   if ((v.master.AN || "") === (v.master.AO || "")) return 0;
   const s = v.costSettings || costDefaults;
   let base = 0;
-  if (s.financing)
-    base +=
-      n(v.master.BA) > 0
-        ? n(v.master.BA)
-        : n(v.master.BB) > 0
-          ? n(v.master.BB)
-          : 0;
+  if (s.financing) base += financingAmount(v, year, monthIndex);
   if (
     s.shelf &&
     String(v.master.AC).toLowerCase() === "ja" &&
@@ -1330,6 +1368,7 @@ async function saveEdits() {
       throw new Error("Es ist kein Bearbeitungsdatensatz vorhanden.");
     const index = vehicles.findIndex((v) => v.id === selectedId);
     if (index < 0) throw new Error("Das Fahrzeug wurde nicht gefunden.");
+    ensureFinancingHistory(vehicles[index], draft);
     for (const y of [2025, 2026, 2027, 2028, 2029, 2030])
       recalc(draft, String(y));
     draft.displayName =
