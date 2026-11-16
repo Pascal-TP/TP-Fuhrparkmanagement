@@ -1590,3 +1590,19 @@ button.danger.subtle:hover { background: #fff4f3; }
   .company-setting-title, .company-setting-row { grid-template-columns: 1fr; display: grid; }
   .company-setting-title button, .company-setting-row button { width: 100%; }
 }
+
+/* V2.12.1: PDF-Hilfe im Kopfbereich */
+.help-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border-radius: 7px;
+  background: #78909c;
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.help-button:hover { filter: brightness(0.95); }
+.help-button:focus-visible { outline: 3px solid #263238; outline-offset: 2px; }
